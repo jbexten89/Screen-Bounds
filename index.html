@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07080A">
+<meta name="apple-mobile-web-app-title" content="Bounds">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Screen Bounds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:opsz,wght@6..12,400;6..12,600&display=swap" rel="stylesheet">
+<style>
+/*
+VOICE: precise engineering instrument, calm.
+IDEA: a calibration overlay / machinist's rule laid over the glass.
+PICTURE: the whole screen is the drawing: edge lines, safe-area lines, rulers, dimension arrows.
+COLOUR and TYPE: near-black, charcoal panel, mint for safe area, amber for outer edge; Nunito Sans 600 numbers.
+LAYOUT: full-bleed overlay, info card centred inside the safe area, tap to hide.
+*/
+:root{color-scheme:dark;--bg:#07080A;--panel:#111317;--line:#262a31;--ink:#e6e8eb;--mute:#8b9098;--mint:#3CC79A;--amber:#E3A04F;--blue:#6aa6ff}
+*{box-sizing:border-box;min-width:0;margin:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font:15px/1.45 "Nunito Sans",system-ui,-apple-system,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+#probe{position:fixed;visibility:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+svg#ov{position:fixed;inset:0;width:100vw;height:100dvh;display:block}
+.card{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(320px,calc(100vw - 96px));background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px 16px 12px;box-shadow:0 20px 50px rgba(0,0,0,.5);transition:opacity .2s}
+.card.hide{opacity:0;pointer-events:none}
+.big{font-size:30px;font-weight:600;line-height:1.05;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.big small{font-size:15px;color:var(--mute);font-weight:400}
+.sub{color:var(--mute);font-size:13px;margin:2px 0 12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td{padding:5px 0;border-top:1px solid var(--line)}
+td:last-child{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{color:var(--mute)}
+.key{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mute);margin-top:10px}
+.key i{display:inline-block;width:14px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
+.note{font-size:12px;color:var(--mute);margin-top:8px}
+.warn{background:var(--amber);color:#14110a;border-radius:10px;padding:8px 10px;font-size:12.5px;margin-top:10px;display:none}
+.warn.on{display:block}
+.fz{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.fz label{display:block;font-size:13px;color:var(--mute);margin-top:6px}
+.fz b{float:right;color:#b49cff;font-weight:600}
+.fz input{width:100%;height:32px;accent-color:#b49cff}
+</style>
+</head>
+<body>
+<div id="probe"></div>
+<svg id="ov" aria-label="Screen boundary overlay"></svg>
+<div class="card" id="card">
+  <div class="big" id="vp">–</div>
+  <div class="sub" id="vpsub">CSS px viewport</div>
+  <table>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="key">
+    <span><i style="color:var(--amber)"></i>Viewport edge</span>
+    <span><i style="color:var(--mint);border-top-style:dashed"></i>Safe area</span>
+    <span><i style="color:#b49cff;border-top-width:6px;opacity:.6"></i>Fade zone</span>
+  </div>
+  <div class="fz" id="fz">
+    <label>Top fade past safe area <b id="ftv">20 px</b><input type="range" id="ft" min="0" max="80" step="1" value="20"></label>
+    <label>Bottom fade past safe area <b id="fbv">20 px</b><input type="range" id="fb" min="0" max="80" step="1" value="20"></label>
+    <div class="note">iOS draws this fade behind the status bar and home bar. Web pages can't read its size, so drag these until the purple bands match the fade you see.</div>
+  </div>
+  <div class="warn" id="warn"></div>
+  <div class="note">Tap anywhere to hide or show this card. Rotate to re-measure.</div>
+</div>
+<script>
+{
+const NS='http://www.w3.org/2000/svg';
+const ov=document.getElementById('ov'),probe=document.getElementById('probe'),card=document.getElementById('card');
+const el=(t,a,txt)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e};
+const r=n=>Math.round(n*100)/100;
+
+const fade={t:20,b:20};
+try{const s=JSON.parse(localStorage.getItem('sb-fade')||'null');if(s){fade.t=+s.t||0;fade.b=+s.b||0}}catch(e){}
+const ftI=document.getElementById('ft'),fbI=document.getElementById('fb');
+ftI.value=fade.t;fbI.value=fade.b;
+document.getElementById('ftv').textContent=fade.t+' px';document.getElementById('fbv').textContent=fade.b+' px';
+const syncFade=()=>{fade.t=+ftI.value;fade.b=+fbI.value;
+  document.getElementById('ftv').textContent=fade.t+' px';document.getElementById('fbv').textContent=fade.b+' px';
+  try{localStorage.setItem('sb-fade',JSON.stringify(fade))}catch(e){}draw()};
+ftI.addEventListener('input',syncFade);fbI.addEventListener('input',syncFade);
+document.getElementById('fz').addEventListener('click',e=>e.stopPropagation());
+function insets(){const s=getComputedStyle(probe);return{t:parseFloat(s.paddingTop)||0,r:parseFloat(s.paddingRight)||0,b:parseFloat(s.paddingBottom)||0,l:parseFloat(s.paddingLeft)||0}}
+
+function label(x,y,txt,color,anchor='middle',rot=0){
+  const g=el('g',{transform:`translate(${x},${y}) rotate(${rot})`});
+  const t=el('text',{x:0,y:0,'text-anchor':anchor,'dominant-baseline':'middle',fill:color,'font-size':12,'font-weight':600,'font-family':'Nunito Sans, system-ui'},txt);
+  g.appendChild(t);ov.appendChild(g);
+  const bb=t.getBBox();
+  const bg=el('rect',{x:bb.x-4,y:bb.y-2,width:bb.width+8,height:bb.height+4,rx:5,fill:'#07080A',opacity:.9});
+  g.insertBefore(bg,t);
+}
+function arrowLine(x1,y1,x2,y2,c){
+  ov.appendChild(el('line',{x1,y1,x2,y2,stroke:c,'stroke-width':1.2,'marker-start':'url(#a-'+c.slice(1)+')','marker-end':'url(#a-'+c.slice(1)+')'}));
+}
+
+function draw(){
+  const W=window.innerWidth,H=window.innerHeight,i=insets();
+  const dpr=window.devicePixelRatio||1;
+  ov.setAttribute('viewBox',`0 0 ${W} ${H}`);ov.innerHTML='';
+  const defs=el('defs');
+  for(const c of ['#E3A04F','#3CC79A','#6aa6ff']){
+    const m=el('marker',{id:'a-'+c.slice(1),viewBox:'0 0 10 10',refX:5,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});
+    m.appendChild(el('path',{d:'M0,1 L9,5 L0,9 z',fill:c}));defs.appendChild(m);
+  }
+  ov.appendChild(defs);
+
+  // rulers: ticks every 10px, longer every 50, labels every 100
+  const AM='#E3A04F';
+  for(let x=0;x<=W;x+=10){const L=x%100===0?14:x%50===0?9:4;
+    ov.appendChild(el('line',{x1:x,y1:0,x2:x,y2:L,stroke:'#5a5f68','stroke-width':1}));
+    ov.appendChild(el('line',{x1:x,y1:H,x2:x,y2:H-L,stroke:'#5a5f68','stroke-width':1}));
+    if(x%100===0&&x>0&&x<W-20)ov.appendChild(el('text',{x:x,y:H*0.5+0,fill:'transparent'},''));}
+  for(let y=0;y<=H;y+=10){const L=y%100===0?14:y%50===0?9:4;
+    ov.appendChild(el('line',{x1:0,y1:y,x2:L,y2:y,stroke:'#5a5f68','stroke-width':1}));
+    ov.appendChild(el('line',{x1:W,y1:y,x2:W-L,y2:y,stroke:'#5a5f68','stroke-width':1}));}
+  // ruler numbers along left side, every 100
+  for(let y=100;y<H-10;y+=100)ov.appendChild(el('text',{x:17,y:y+4,fill:'#6b7079','font-size':10,'font-family':'Nunito Sans, system-ui'},y));
+  for(let x=100;x<W-10;x+=100)ov.appendChild(el('text',{x:x,y:26,'text-anchor':'middle',fill:'#6b7079','font-size':10,'font-family':'Nunito Sans, system-ui'},x));
+
+  // viewport edge
+  ov.appendChild(el('rect',{x:1,y:1,width:W-2,height:H-2,fill:'none',stroke:AM,'stroke-width':2}));
+
+  // safe area
+  const MI='#3CC79A',sx=i.l,sy=i.t,sw=W-i.l-i.r,sh=H-i.t-i.b;
+  ov.appendChild(el('rect',{x:sx,y:sy,width:sw,height:sh,fill:'rgba(60,199,154,.05)',stroke:MI,'stroke-width':1.5,'stroke-dasharray':'6 5'}));
+
+  // fade zones (scroll-edge effect), estimated: safe inset + adjustable extra
+  const PU='#b49cff';
+  const ft=Math.min(H/2,i.t+fade.t),fb=Math.min(H/2,i.b+fade.b);
+  const gT=el('linearGradient',{id:'gT',x1:0,y1:0,x2:0,y2:1});
+  gT.appendChild(el('stop',{offset:0,'stop-color':PU,'stop-opacity':.38}));
+  gT.appendChild(el('stop',{offset:1,'stop-color':PU,'stop-opacity':0}));
+  const gB=el('linearGradient',{id:'gB',x1:0,y1:1,x2:0,y2:0});
+  gB.appendChild(el('stop',{offset:0,'stop-color':PU,'stop-opacity':.38}));
+  gB.appendChild(el('stop',{offset:1,'stop-color':PU,'stop-opacity':0}));
+  defs.appendChild(gT);defs.appendChild(gB);
+  if(ft>0){ov.appendChild(el('rect',{x:0,y:0,width:W,height:ft,fill:'url(#gT)'}));
+    ov.appendChild(el('line',{x1:0,y1:ft,x2:W,y2:ft,stroke:PU,'stroke-width':1,'stroke-dasharray':'2 4'}));
+    arrowLine(W*0.64,2,W*0.64,ft-2,PU);label(W*0.64-8,ft-12,`fade ${r(ft)}`,PU,'end');}
+  if(fb>0){ov.appendChild(el('rect',{x:0,y:H-fb,width:W,height:fb,fill:'url(#gB)'}));
+    ov.appendChild(el('line',{x1:0,y1:H-fb,x2:W,y2:H-fb,stroke:PU,'stroke-width':1,'stroke-dasharray':'2 4'}));
+    arrowLine(W*0.64,H-fb+2,W*0.64,H-2,PU);label(W*0.64-8,H-fb+12,`fade ${r(fb)}`,PU,'end');}
+
+  // overall dimension arrows
+  const midY=sy+sh*0.18, midX=sx+sw*0.86;
+  arrowLine(3,midY,W-3,midY,AM);label(W/2,midY,`width ${r(W)} px`,AM);
+  arrowLine(midX,3,midX,H-3,AM);label(midX,H*0.72,`height ${r(H)} px`,AM,'middle',-90);
+
+  // safe-area dimension arrows
+  const BL='#6aa6ff';
+  const sY=sy+sh*0.82;
+  arrowLine(sx+3,sY,sx+sw-3,sY,MI);label(sx+sw/2,sY,`safe ${r(sw)} px`,MI);
+  const sX=sx+sw*0.1;
+  arrowLine(sX,sy+3,sX,sy+sh-3,MI);label(sX,sy+sh*0.32,`safe ${r(sh)} px`,MI,'middle',-90);
+
+  // inset arrows
+  const cx=W*0.36,cy=H*0.5;
+  if(i.t>0){arrowLine(cx,2,cx,i.t-2,BL);label(cx+8,i.t/2,`top ${r(i.t)}`,BL,'start');}
+  if(i.b>0){arrowLine(cx,H-i.b+2,cx,H-2,BL);label(cx+8,H-i.b/2,`bottom ${r(i.b)}`,BL,'start');}
+  if(i.l>0){arrowLine(2,cy,i.l-2,cy,BL);label(i.l/2,cy-14,`left ${r(i.l)}`,BL);}
+  if(i.r>0){arrowLine(W-i.r+2,cy,W-2,cy,BL);label(W-i.r/2,cy-14,`right ${r(i.r)}`,BL);}
+
+  // card
+  const sw2=screen.width,sh2=screen.height;
+  const portrait=H>=W;
+  const physW=Math.round((portrait?Math.min(sw2,sh2):Math.max(sw2,sh2))*dpr),physH=Math.round((portrait?Math.max(sw2,sh2):Math.min(sw2,sh2))*dpr);
+  document.getElementById('vp').innerHTML=`${r(W)} × ${r(H)} <small>px</small>`;
+  const standalone=window.navigator.standalone||matchMedia('(display-mode: standalone)').matches;
+  document.getElementById('vpsub').textContent=`CSS px viewport · ${portrait?'portrait':'landscape'} · ${standalone?'home screen app':'in browser'}`;
+  const vv=window.visualViewport;
+  const rows=[
+    ['Screen (CSS px)',`${sw2} × ${sh2}`],
+    ['Pixel ratio',`${r(dpr)}×`],
+    ['Physical pixels',`${physW} × ${physH}`],
+    ['Safe area',`${r(sw)} × ${r(sh)}`],
+    ['Insets T / B',`${r(i.t)} / ${r(i.b)}`],
+    ['Insets L / R',`${r(i.l)} / ${r(i.r)}`],
+    ['Visual viewport',vv?`${r(vv.width)} × ${r(vv.height)}`:'n/a'],
+    ['Fade top / bottom',`${r(ft)} / ${r(fb)}`],
+    ['Clear content area',`${r(W)} × ${r(H-ft-fb)}`],
+  ];
+  document.getElementById('rows').innerHTML=rows.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const warn=document.getElementById('warn');
+  const framed=window.self!==window.top;
+  if(framed||(H<sh2-60&&!standalone)){
+    warn.textContent=framed
+      ?'This view is inside the Claude app, so you are measuring its frame, not the full screen. Open the link in Safari, then Share → Add to Home Screen for true edge-to-edge numbers.'
+      :'Safari toolbars are taking space. Add to Home Screen and launch from there to measure the full glass.';
+    warn.classList.add('on');
+  } else warn.classList.remove('on');
+}
+
+let raf;const redraw=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>requestAnimationFrame(draw))};
+window.addEventListener('resize',redraw);
+window.addEventListener('orientationchange',()=>setTimeout(draw,300));
+if(window.visualViewport)visualViewport.addEventListener('resize',redraw);
+document.addEventListener('click',()=>card.classList.toggle('hide'));
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(redraw);
+draw();
+}
+</script>
+</body>
+</html>
